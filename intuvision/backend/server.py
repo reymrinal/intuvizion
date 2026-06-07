@@ -125,41 +125,32 @@ def extract_frames(video_path, sample_fps=1):
     cap.release()
     return frames, orig_fps
 
-def pil_to_b64(pil_image):
+def analyze_frame(pil_image, rule_prompt):
     buf = io.BytesIO()
     pil_image.save(buf, format="JPEG", quality=80)
-    return base64.b64encode(buf.getvalue()).decode("utf-8")
+    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
 
-def analyze_frame(pil_image, rule_prompt):
-    b64 = pil_to_b64(pil_image)
+    prompt = f"""You are a video surveillance AI analyzing a single video frame.
+RULE: {rule_prompt}
+
+Analyze this frame carefully. Respond ONLY with a JSON object — no markdown, no explanation:
+{{"violation": true or false, "confidence": 0.0 to 1.0, "description": "brief description of what you see", "objects_detected": ["list", "of", "relevant", "objects"]}}
+
+Only mark violation=true if you clearly see evidence of the rule being broken."""
+
     response = client.chat.completions.create(
         model="gpt-4o",
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "low"}},
+                {"type": "text", "text": prompt}
+            ]
+        }],
         max_tokens=300,
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a video surveillance AI. Analyze frames and detect rule violations. Always respond with valid JSON only — no markdown, no explanation."
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": f"""RULE: {rule_prompt}
-
-Analyze this frame. Respond ONLY with this JSON structure:
-{{"violation": true or false, "confidence": 0.0 to 1.0, "description": "brief description of what you see relevant to the rule", "objects_detected": ["list", "of", "relevant", "objects"]}}
-
-Only mark violation=true if you clearly see evidence of the rule being broken. Be strict."""
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "low"}
-                    }
-                ]
-            }
-        ]
+        temperature=0.1
     )
+
     text = response.choices[0].message.content.strip()
     if "```" in text:
         text = text.split("```")[1]
@@ -256,8 +247,8 @@ def run_analysis(job_id, video_id, rule_ids, sample_fps=1):
                         new_alerts.append(alert)
                     streak = []
 
-                # Small delay to respect rate limits
-                time.sleep(0.2)
+                # Respect OpenAI rate limits
+                time.sleep(0.5)
 
             alert = flush_streak(streak, video, rule, job_id, orig_fps, thresh)
             if alert:
@@ -266,7 +257,6 @@ def run_analysis(job_id, video_id, rule_ids, sample_fps=1):
         all_alerts.extend(new_alerts)
         save_json(ALERTS_FILE, all_alerts)
         jobs[job_id].update({"status": "done", "progress": 100, "stage": "Complete", "alert_count": len(new_alerts)})
-
     except Exception as ex:
         import traceback; traceback.print_exc()
         jobs[job_id].update({"status": "error", "error": str(ex)})
@@ -349,14 +339,15 @@ def get_stats():
     sev = {"critical": 0, "high": 0, "medium": 0, "low": 0}
     rule_c = {}
     for a in alerts:
-        sev[a.get("severity", "medium")] = sev.get(a.get("severity", "medium"), 0) + 1
+        s = a.get("severity", "medium")
+        sev[s] = sev.get(s, 0) + 1
         rule_c[a.get("rule_name", "Unknown")] = rule_c.get(a.get("rule_name", "Unknown"), 0) + 1
     return jsonify({"total_alerts": len(alerts), "total_rules": len(rules),
                     "total_videos": len(videos), "severity_breakdown": sev, "alerts_by_rule": rule_c})
 
 @app.route("/api/health")
 def health():
-    return jsonify({"status": "ok", "model": "gpt-4o", "time": time.time()})
+    return jsonify({"status": "ok", "time": time.time(), "model": "gpt-4o"})
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5050))

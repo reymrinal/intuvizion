@@ -1,0 +1,26 @@
+services:
+  # Backend — Python/Flask
+  - type: web
+    name: intuvizion-backend
+    env: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn server:app --bind 0.0.0.0:$PORT --workers 1 --timeout 300
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+
+  # Frontend — React static site
+  - type: web
+    name: intuvizion-frontend
+    env: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: build
+    envVars:
+      - key: REACT_APP_API_URL
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
