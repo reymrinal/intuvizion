@@ -3,7 +3,8 @@ from pathlib import Path
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import cv2
-from openai import OpenAI
+from google import genai
+from google.genai import types
 from PIL import Image
 import io
 
@@ -15,7 +16,7 @@ if env_path.exists():
             k, v = line.split('=', 1)
             os.environ.setdefault(k.strip(), v.strip())
 
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
 app = Flask(__name__)
 CORS(app)
@@ -128,7 +129,7 @@ def extract_frames(video_path, sample_fps=1):
 def analyze_frame(pil_image, rule_prompt):
     buf = io.BytesIO()
     pil_image.save(buf, format="JPEG", quality=80)
-    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+    img_bytes = buf.getvalue()
 
     prompt = f"""You are a video surveillance AI analyzing a single video frame.
 RULE: {rule_prompt}
@@ -136,22 +137,17 @@ RULE: {rule_prompt}
 Analyze this frame carefully. Respond ONLY with a JSON object — no markdown, no explanation:
 {{"violation": true or false, "confidence": 0.0 to 1.0, "description": "brief description of what you see", "objects_detected": ["list", "of", "relevant", "objects"]}}
 
-Only mark violation=true if you clearly see evidence of the rule being broken."""
+Only mark violation=true if you clearly see evidence of the rule being broken. Be strict."""
 
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[{
-            "role": "user",
-            "content": [
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "low"}},
-                {"type": "text", "text": prompt}
-            ]
-        }],
-        max_tokens=300,
-        temperature=0.1
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=[
+            types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg"),
+            prompt
+        ]
     )
 
-    text = response.choices[0].message.content.strip()
+    text = response.text.strip()
     if "```" in text:
         text = text.split("```")[1]
         if text.startswith("json"):
@@ -247,8 +243,7 @@ def run_analysis(job_id, video_id, rule_ids, sample_fps=1):
                         new_alerts.append(alert)
                     streak = []
 
-                # Respect OpenAI rate limits
-                time.sleep(0.5)
+                time.sleep(0.2)
 
             alert = flush_streak(streak, video, rule, job_id, orig_fps, thresh)
             if alert:
@@ -257,6 +252,7 @@ def run_analysis(job_id, video_id, rule_ids, sample_fps=1):
         all_alerts.extend(new_alerts)
         save_json(ALERTS_FILE, all_alerts)
         jobs[job_id].update({"status": "done", "progress": 100, "stage": "Complete", "alert_count": len(new_alerts)})
+
     except Exception as ex:
         import traceback; traceback.print_exc()
         jobs[job_id].update({"status": "error", "error": str(ex)})
@@ -347,7 +343,7 @@ def get_stats():
 
 @app.route("/api/health")
 def health():
-    return jsonify({"status": "ok", "time": time.time(), "model": "gpt-4o"})
+    return jsonify({"status": "ok", "time": time.time(), "model": "gemini-2.0-flash"})
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5050))
