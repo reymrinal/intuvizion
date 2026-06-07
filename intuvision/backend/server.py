@@ -3,8 +3,7 @@ from pathlib import Path
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import cv2
-from google import genai
-from google.genai import types
+from openai import OpenAI
 from PIL import Image
 import io
 
@@ -16,7 +15,7 @@ if env_path.exists():
             k, v = line.split('=', 1)
             os.environ.setdefault(k.strip(), v.strip())
 
-client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 app = Flask(__name__)
 CORS(app)
@@ -129,7 +128,7 @@ def extract_frames(video_path, sample_fps=1):
 def analyze_frame(pil_image, rule_prompt):
     buf = io.BytesIO()
     pil_image.save(buf, format="JPEG", quality=80)
-    img_bytes = buf.getvalue()
+    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
 
     prompt = f"""You are a video surveillance AI analyzing a single video frame.
 RULE: {rule_prompt}
@@ -139,15 +138,20 @@ Analyze this frame carefully. Respond ONLY with a JSON object — no markdown, n
 
 Only mark violation=true if you clearly see evidence of the rule being broken. Be strict."""
 
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=[
-            types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg"),
-            prompt
-        ]
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "low"}},
+                {"type": "text", "text": prompt}
+            ]
+        }],
+        max_tokens=300,
+        temperature=0.1
     )
 
-    text = response.text.strip()
+    text = response.choices[0].message.content.strip()
     if "```" in text:
         text = text.split("```")[1]
         if text.startswith("json"):
@@ -243,7 +247,7 @@ def run_analysis(job_id, video_id, rule_ids, sample_fps=1):
                         new_alerts.append(alert)
                     streak = []
 
-                time.sleep(0.2)
+                time.sleep(0.5)
 
             alert = flush_streak(streak, video, rule, job_id, orig_fps, thresh)
             if alert:
@@ -343,7 +347,7 @@ def get_stats():
 
 @app.route("/api/health")
 def health():
-    return jsonify({"status": "ok", "time": time.time(), "model": "gemini-2.0-flash"})
+    return jsonify({"status": "ok", "time": time.time(), "model": "gpt-4o"})
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5050))

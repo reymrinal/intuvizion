@@ -3,6 +3,9 @@
   command = "npm run build"
   publish = "build"
 
+[build.environment]
+  REACT_APP_API_URL = "https://your-render-backend.onrender.com"
+
 [[redirects]]
   from = "/*"
   to = "/index.html"
