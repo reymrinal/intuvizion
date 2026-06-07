@@ -1,5 +1,5 @@
 import axios from 'axios';
-const BASE = process.env.REACT_APP_API_URL || 'http://localhost:5050';
+const BASE = process.env.REACT_APP_API_URL || 'https://intuvizion.onrender.com';
 const api = axios.create({ baseURL: BASE });
 
 export const getRules    = ()       => api.get('/api/rules').then(r=>r.data);
