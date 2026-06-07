@@ -1,10 +1,9 @@
 [build]
-  base = "frontend"
   command = "npm run build"
   publish = "build"
 
 [build.environment]
-  REACT_APP_API_URL = "https://your-render-backend.onrender.com"
+  REACT_APP_API_URL = "https://intuvizion.onrender.com"
 
 [[redirects]]
   from = "/*"
