@@ -1,10 +1,9 @@
-import os, json, uuid, time, threading
+import os, json, uuid, time, threading, base64
 from pathlib import Path
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import cv2
-from google import genai
-from google.genai import types
+from openai import OpenAI
 from PIL import Image
 import io
 
@@ -16,7 +15,7 @@ if env_path.exists():
             k, v = line.split('=', 1)
             os.environ.setdefault(k.strip(), v.strip())
 
-client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 app = Flask(__name__)
 CORS(app)
@@ -126,26 +125,42 @@ def extract_frames(video_path, sample_fps=1):
     cap.release()
     return frames, orig_fps
 
-def analyze_frame(pil_image, rule_prompt):
+def pil_to_b64(pil_image):
     buf = io.BytesIO()
     pil_image.save(buf, format="JPEG", quality=80)
-    img_bytes = buf.getvalue()
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
 
-    prompt = f"""You are a video surveillance AI analyzing a single frame.
-RULE: {rule_prompt}
-Analyze this frame. Respond ONLY with a JSON object, no markdown, no explanation:
-{{"violation": true or false, "confidence": 0.0 to 1.0, "description": "brief description of what you see", "objects_detected": ["list", "of", "relevant", "objects"]}}
-Only mark violation=true if you clearly see evidence of the rule being broken."""
+def analyze_frame(pil_image, rule_prompt):
+    b64 = pil_to_b64(pil_image)
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        max_tokens=300,
+        messages=[
+            {
+                "role": "system",
+                "content": "You are a video surveillance AI. Analyze frames and detect rule violations. Always respond with valid JSON only — no markdown, no explanation."
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"""RULE: {rule_prompt}
 
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=[
-            types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg"),
-            prompt
+Analyze this frame. Respond ONLY with this JSON structure:
+{{"violation": true or false, "confidence": 0.0 to 1.0, "description": "brief description of what you see relevant to the rule", "objects_detected": ["list", "of", "relevant", "objects"]}}
+
+Only mark violation=true if you clearly see evidence of the rule being broken. Be strict."""
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "low"}
+                    }
+                ]
+            }
         ]
     )
-    text = response.text.strip()
-    # Strip markdown if present
+    text = response.choices[0].message.content.strip()
     if "```" in text:
         text = text.split("```")[1]
         if text.startswith("json"):
@@ -241,8 +256,8 @@ def run_analysis(job_id, video_id, rule_ids, sample_fps=1):
                         new_alerts.append(alert)
                     streak = []
 
-                if i % 8 == 0 and i > 0:
-                    time.sleep(0.3)
+                # Small delay to respect rate limits
+                time.sleep(0.2)
 
             alert = flush_streak(streak, video, rule, job_id, orig_fps, thresh)
             if alert:
@@ -251,6 +266,7 @@ def run_analysis(job_id, video_id, rule_ids, sample_fps=1):
         all_alerts.extend(new_alerts)
         save_json(ALERTS_FILE, all_alerts)
         jobs[job_id].update({"status": "done", "progress": 100, "stage": "Complete", "alert_count": len(new_alerts)})
+
     except Exception as ex:
         import traceback; traceback.print_exc()
         jobs[job_id].update({"status": "error", "error": str(ex)})
@@ -262,7 +278,8 @@ def start_analysis():
     if not vid or not rids:
         return jsonify({"error": "video_id and rule_ids required"}), 400
     job_id = str(uuid.uuid4())
-    jobs[job_id] = {"id": job_id, "video_id": vid, "rule_ids": rids, "status": "queued", "progress": 0, "stage": "Queued", "created_at": time.time()}
+    jobs[job_id] = {"id": job_id, "video_id": vid, "rule_ids": rids,
+                    "status": "queued", "progress": 0, "stage": "Queued", "created_at": time.time()}
     threading.Thread(target=run_analysis, args=(job_id, vid, rids, d.get("sample_fps", 1)), daemon=True).start()
     return jsonify({"job_id": job_id}), 202
 
@@ -334,11 +351,13 @@ def get_stats():
     for a in alerts:
         sev[a.get("severity", "medium")] = sev.get(a.get("severity", "medium"), 0) + 1
         rule_c[a.get("rule_name", "Unknown")] = rule_c.get(a.get("rule_name", "Unknown"), 0) + 1
-    return jsonify({"total_alerts": len(alerts), "total_rules": len(rules), "total_videos": len(videos), "severity_breakdown": sev, "alerts_by_rule": rule_c})
+    return jsonify({"total_alerts": len(alerts), "total_rules": len(rules),
+                    "total_videos": len(videos), "severity_breakdown": sev, "alerts_by_rule": rule_c})
 
 @app.route("/api/health")
 def health():
-    return jsonify({"status": "ok", "time": time.time()})
+    return jsonify({"status": "ok", "model": "gpt-4o", "time": time.time()})
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5050, debug=False)
+    port = int(os.environ.get("PORT", 5050))
+    app.run(host="0.0.0.0", port=port, debug=False)
