@@ -59,7 +59,7 @@ export default function Rules() {
     setEditId(rule.id); setShowForm(true);
   };
 
-  const useSuggestion = (s) => setForm(f => ({ ...f, prompt: s, name: f.name || s.slice(0,40) }));
+  const applySuggestion = (s) => setForm(f => ({ ...f, prompt: s, name: f.name || s.slice(0,40) }));
 
   return (
     <div style={{ padding:32 }}>
@@ -122,7 +122,7 @@ export default function Rules() {
             </div>
             <div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
               {SUGGESTIONS.map(s => (
-                <button key={s} onClick={()=>useSuggestion(s)}
+                <button key={s} onClick={()=>applySuggestion(s)}
                   style={{ fontSize:11, background:'#1e293b', border:'1px solid #334155', color:'#94a3b8', borderRadius:6, padding:'4px 10px', cursor:'pointer' }}>
                   {s.slice(0,50)}{s.length>50?'...':''}
                 </button>
