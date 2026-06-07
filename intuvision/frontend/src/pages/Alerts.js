@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { getAlerts, deleteAlert, snapshotUrl, clipUrl, getRules, getVideos } from '../api';
-import { Trash2, Image, Video, ChevronDown, ChevronUp, Filter } from 'lucide-react';
+import { getAlerts, snapshotUrl, clipUrl, getRules, getVideos } from '../api';
+import { Trash2, Image, Video, ChevronDown, ChevronUp } from 'lucide-react';
 
 const SEV_COLOR = { critical:'#ef4444', high:'#f97316', medium:'#eab308', low:'#22c55e' };
 const SEV_BG    = { critical:'#450a0a', high:'#431407', medium:'#422006', low:'#052e16' };

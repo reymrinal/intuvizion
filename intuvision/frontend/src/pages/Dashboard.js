@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { getStats, getAlerts } from '../api';
-import { AlertTriangle, Shield, Video, List, TrendingUp, Clock } from 'lucide-react';
+import { AlertTriangle, Shield, Video, List } from 'lucide-react';
 
 const SEV_COLOR = { critical:'#ef4444', high:'#f97316', medium:'#eab308', low:'#22c55e' };
 const SEV_BG    = { critical:'#450a0a', high:'#431407', medium:'#422006', low:'#052e16' };

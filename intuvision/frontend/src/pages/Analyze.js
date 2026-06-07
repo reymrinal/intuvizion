@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { getVideos, getRules, startAnalysis, getJob } from '../api';
-import { Play, CheckCircle, XCircle, Loader, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
+import { Play, CheckCircle, XCircle, Loader, AlertTriangle } from 'lucide-react';
 
 export default function Analyze() {
   const [videos, setVideos] = useState([]);
@@ -10,7 +10,6 @@ export default function Analyze() {
   const [sampleFps, setSampleFps] = useState(1);
   const [job, setJob] = useState(null);
   const [polling, setPolling] = useState(false);
-  const [jobs, setJobs] = useState([]);
 
   useEffect(() => {
     getVideos().then(setVideos).catch(()=>{});
@@ -25,10 +24,6 @@ export default function Analyze() {
         setJob(j);
         if (j.status === 'done' || j.status === 'error') {
           setPolling(false);
-          setJobs(prev => {
-            const exists = prev.find(x=>x.id===j.id);
-            return exists ? prev.map(x=>x.id===j.id?j:x) : [j,...prev];
-          });
         }
       }
     }, 2000);
@@ -51,7 +46,6 @@ export default function Analyze() {
     return <AlertTriangle size={16} color="#eab308"/>;
   };
 
-  const selVideo = videos.find(v=>v.id===selectedVideo);
 
   return (
     <div style={{ padding:32 }}>
