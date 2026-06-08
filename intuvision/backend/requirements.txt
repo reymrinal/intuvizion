@@ -5,3 +5,4 @@ opencv-python-headless==4.11.0.86
 Pillow==12.2.0
 gunicorn==21.2.0
 python-dotenv==1.0.1
+psycopg2-binary==2.9.9
