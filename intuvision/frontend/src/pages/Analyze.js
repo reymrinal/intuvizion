@@ -1,16 +1,17 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { getVideos, getRules, startAnalysis, getJob } from '../api';
 import { Play, CheckCircle, XCircle, Loader, AlertTriangle, RefreshCw } from 'lucide-react';
 
 export default function Analyze() {
-  const [videos, setVideos]           = useState([]);
-  const [rules, setRules]             = useState([]);
+  const [videos, setVideos]               = useState([]);
+  const [rules, setRules]                 = useState([]);
   const [selectedVideo, setSelectedVideo] = useState('');
   const [selectedRules, setSelectedRules] = useState([]);
-  const [sampleFps, setSampleFps]     = useState(1);
-  const [job, setJob]                 = useState(null);
-  const [polling, setPolling]         = useState(false);
-  const [loading, setLoading]         = useState(true);
+  const [sampleFps, setSampleFps]         = useState(1);
+  const [job, setJob]                     = useState(null);
+  const [polling, setPolling]             = useState(false);
+  const [loading, setLoading]             = useState(true);
+  const failCountRef                      = useRef(0);   // consecutive poll failures
 
   const fetchData = useCallback(() => {
     setLoading(true);
@@ -27,36 +28,55 @@ export default function Analyze() {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   useEffect(() => {
-    if (!polling || !job) return;
+    if (!polling || !job?.job_id) return;
+    failCountRef.current = 0;
+
     const t = setInterval(async () => {
-      const j = await getJob(job.job_id).catch(() => null);
-      if (j) {
+      try {
+        const j = await getJob(job.job_id);
+        failCountRef.current = 0;   // reset on success
         setJob(j);
         if (j.status === 'done' || j.status === 'error') {
           setPolling(false);
         }
-      } else {
-        // Backend may have restarted — mark error so UI doesn't hang forever
-        setJob(prev => ({ ...prev, status: 'error', error: 'Backend restarted or job lost. Please re-run.' }));
-        setPolling(false);
+      } catch {
+        failCountRef.current += 1;
+        // Only give up after 5 consecutive failures (~10s of no response)
+        if (failCountRef.current >= 5) {
+          setJob(prev => ({
+            ...prev,
+            status: 'error',
+            error: 'Lost connection to backend. Refresh the page — your alert may have been saved.',
+          }));
+          setPolling(false);
+        }
       }
     }, 2000);
     return () => clearInterval(t);
-  }, [polling, job]);
+  }, [polling, job?.job_id]);
 
   const toggleRule = (id) =>
     setSelectedRules(r => r.includes(id) ? r.filter(x => x !== id) : [...r, id]);
 
   const run = async () => {
     if (!selectedVideo || selectedRules.length === 0) return;
-    setJob({ job_id: null, status: 'queued', progress: 0, stage: 'Starting...' });
+    setJob({ job_id: null, status: 'queued', progress: 0, stage: 'Starting…' });
     setPolling(false);
     try {
-      const res = await startAnalysis({ video_id: selectedVideo, rule_ids: selectedRules, sample_fps: sampleFps });
+      const res = await startAnalysis({
+        video_id: selectedVideo,
+        rule_ids: selectedRules,
+        sample_fps: sampleFps,
+      });
+      failCountRef.current = 0;
       setJob({ job_id: res.job_id, status: 'queued', progress: 0, stage: 'Queued' });
       setPolling(true);
-    } catch (e) {
-      setJob({ job_id: null, status: 'error', error: 'Failed to start analysis. Is the backend awake? Try again.' });
+    } catch {
+      setJob({
+        job_id: null,
+        status: 'error',
+        error: 'Could not reach backend. It may be waking up — wait 10 seconds and try again.',
+      });
     }
   };
 
@@ -83,11 +103,11 @@ export default function Analyze() {
       </div>
 
       {loading ? (
-        <div style={{ color: '#64748b', fontSize: 14 }}>Loading videos and rules...</div>
+        <div style={{ color: '#64748b', fontSize: 14 }}>Loading videos and rules…</div>
       ) : (
         <>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 24 }}>
-            {/* Select Video */}
+            {/* Video picker */}
             <div style={{ background: '#1e293b', borderRadius: 12, padding: 20, border: '1px solid #334155' }}>
               <h3 style={{ margin: '0 0 14px', fontSize: 14, fontWeight: 600, color: '#e2e8f0' }}>1. Select Video</h3>
               {videos.length === 0
@@ -96,13 +116,15 @@ export default function Analyze() {
                   <div key={v.id} onClick={() => setSelectedVideo(v.id)}
                     style={{ padding: '10px 12px', borderRadius: 8, border: `1px solid ${selectedVideo === v.id ? '#6366f1' : '#334155'}`, marginBottom: 8, cursor: 'pointer', background: selectedVideo === v.id ? '#1e1b4b' : 'transparent', transition: 'all .15s' }}>
                     <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{v.label}</div>
-                    <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{v.camera_type?.replace(/_/g, ' ')} · {Math.round(v.duration || 0)}s · {v.fps}fps</div>
+                    <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                      {v.camera_type?.replace(/_/g, ' ')} · {Math.round(v.duration || 0)}s · {v.fps}fps
+                    </div>
                   </div>
                 ))
               }
             </div>
 
-            {/* Select Rules */}
+            {/* Rule picker */}
             <div style={{ background: '#1e293b', borderRadius: 12, padding: 20, border: '1px solid #334155' }}>
               <h3 style={{ margin: '0 0 14px', fontSize: 14, fontWeight: 600, color: '#e2e8f0' }}>2. Select Rules</h3>
               {rules.length === 0
@@ -115,7 +137,7 @@ export default function Analyze() {
                     </div>
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{r.name}</div>
-                      <div style={{ fontSize: 11, color: '#64748b' }}>{r.prompt?.slice(0, 60)}{r.prompt?.length > 60 ? '...' : ''}</div>
+                      <div style={{ fontSize: 11, color: '#64748b' }}>{r.prompt?.slice(0, 60)}{r.prompt?.length > 60 ? '…' : ''}</div>
                     </div>
                   </div>
                 ))
@@ -123,7 +145,7 @@ export default function Analyze() {
             </div>
           </div>
 
-          {/* Settings */}
+          {/* Sample rate */}
           <div style={{ background: '#1e293b', borderRadius: 12, padding: 20, border: '1px solid #334155', marginBottom: 20, display: 'flex', alignItems: 'center', gap: 24 }}>
             <div>
               <label style={{ fontSize: 12, color: '#94a3b8', display: 'block', marginBottom: 4 }}>Sample Rate (frames/sec)</label>
@@ -141,14 +163,15 @@ export default function Analyze() {
           </div>
 
           {/* Run button */}
-          <button onClick={run} disabled={!selectedVideo || selectedRules.length === 0 || polling}
+          <button onClick={run}
+            disabled={!selectedVideo || selectedRules.length === 0 || polling}
             style={{ display: 'flex', alignItems: 'center', gap: 10, background: (!selectedVideo || selectedRules.length === 0 || polling) ? '#334155' : 'linear-gradient(135deg,#6366f1,#8b5cf6)', border: 'none', color: 'white', borderRadius: 10, padding: '14px 28px', cursor: (!selectedVideo || selectedRules.length === 0 || polling) ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: 15, marginBottom: 28 }}>
-            <Play size={18} /> {polling ? 'Analyzing...' : 'Run Analysis'}
+            <Play size={18} /> {polling ? 'Analyzing…' : 'Run Analysis'}
           </button>
         </>
       )}
 
-      {/* Current job progress */}
+      {/* Job status */}
       {job && (
         <div style={{ background: '#1e293b', borderRadius: 12, padding: 20, border: `1px solid ${job.status === 'done' ? '#16a34a' : job.status === 'error' ? '#dc2626' : '#334155'}`, marginBottom: 20 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
@@ -157,23 +180,36 @@ export default function Analyze() {
               {job.status === 'done'
                 ? `Complete — ${job.alert_count} alert(s) found`
                 : job.status === 'error'
-                  ? `Error: ${job.error}`
-                  : job.stage || 'Processing...'}
+                  ? `${job.error}`
+                  : job.stage || 'Processing…'}
             </span>
           </div>
+
           {(job.status === 'running' || job.status === 'queued') && (
-            <div style={{ background: '#0f172a', borderRadius: 6, height: 8, overflow: 'hidden' }}>
-              <div style={{ width: `${job.progress || 0}%`, height: '100%', background: 'linear-gradient(90deg,#6366f1,#8b5cf6)', transition: 'width .5s', borderRadius: 6 }} />
-            </div>
+            <>
+              <div style={{ background: '#0f172a', borderRadius: 6, height: 8, overflow: 'hidden' }}>
+                <div style={{ width: `${job.progress || 0}%`, height: '100%', background: 'linear-gradient(90deg,#6366f1,#8b5cf6)', transition: 'width .5s', borderRadius: 6 }} />
+              </div>
+              {job.total_frames && (
+                <div style={{ fontSize: 12, color: '#64748b', marginTop: 6 }}>
+                  Frame {Math.round(((job.progress || 0) / 100) * job.total_frames)} of {job.total_frames}
+                </div>
+              )}
+              <div style={{ fontSize: 11, color: '#475569', marginTop: 8 }}>
+                ⏱ GPT-4o takes ~5–10s per frame. For an 11s video at 1fps that's ~1–2 min. Hang tight…
+              </div>
+            </>
           )}
-          {job.total_frames && (
-            <div style={{ fontSize: 12, color: '#64748b', marginTop: 6 }}>
-              Frame {Math.round(((job.progress || 0) / 100) * job.total_frames)} of {job.total_frames}
-            </div>
-          )}
+
           {job.status === 'done' && (
             <div style={{ marginTop: 10, fontSize: 13, color: '#22c55e' }}>
-              ✓ Check the Alerts page to see results.
+              ✓ Head to the <strong>Alerts</strong> page to see results and snapshots.
+            </div>
+          )}
+
+          {job.status === 'error' && (
+            <div style={{ marginTop: 10, fontSize: 12, color: '#94a3b8' }}>
+              💡 Check the <strong>Alerts</strong> page — the analysis may have completed in the background.
             </div>
           )}
         </div>
